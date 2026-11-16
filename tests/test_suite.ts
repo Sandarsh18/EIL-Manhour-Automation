@@ -389,6 +389,97 @@ console.log('\n[2] Comprehensive 20-Point Verification Matrix:');
   assertEqual(resP16.ocsDone, 1, 'Point 16: OCS Done = 1');
   assertEqual(resP16.fd, 1, 'Point 16: Orders for FD = 1 (Balance 0, OCS Date empty, Head RPO blank)');
   assertEqual(resP16.expediting, 4, 'Point 16: Expediting = 2 × (1 + 1) = 4 MH');
+
+  // POINT 21: Scheduled Inspection Date (From)/(Upto) present while Attended Inspection & QAP absent -> Review Date STILL counts in Others
+  const rowsScheduledOnly = [
+    {
+      'Job No': 'B957',
+      'Contractor/ Main Supplier': 'Megha(Pkg09)',
+      'Supplier': 'Micon',
+      'Item': 'Valves',
+      'Inspection Date (From)': '2026-10-01',
+      'Inspection Date(Upto)': '2026-10-01',
+      'Inspection Attended (From)': '',
+      'Inspection Attended(Upto)': '',
+      'Review dates': '2026-10-01',
+      'QAP appl.': '-',
+      'No. of Days': 0.5,
+    },
+    {
+      'Job No': 'B957',
+      'Contractor/ Main Supplier': 'Megha(Pkg09)',
+      'Supplier': 'Micon',
+      'Item': 'Valves',
+      'Inspection Date (From)': '2026-09-10',
+      'Inspection Date(Upto)': '2026-09-10',
+      'Inspection Attended (From)': '',
+      'Inspection Attended(Upto)': '',
+      'Review dates': '2026-10-22',
+      'QAP appl.': 'N/A',
+      'No. of Days': 0.5,
+    },
+  ];
+  const resSched = ExcelService.analyzeJob('B957', '2026-10', [], mockMapping1, rowsScheduledOnly, mockMapping2, [], mockMapping3, 0);
+  assertEqual(resSched.inspection, 0, 'Point 21: Scheduled call dates without Attended dates give 0 Inspection MH');
+  assertEqual(resSched.others, 1.0, 'Point 21: Review dates counted in Others (0.5 + 0.5 = 1.0 MH) despite scheduled dates and "-"/"N/A" QAP');
+  const elig0 = ExcelService.evaluateExcel2RowEligibility(rowsScheduledOnly[0], mockMapping2, '2026-10');
+  assertEqual(elig0.type, 'REVIEW', 'Point 21: evaluateExcel2RowEligibility classifies scheduled-only + Review row as REVIEW');
+  assertEqual(elig0.computedMh, 0.5, 'Point 21: evaluateExcel2RowEligibility computes 0.5 MH');
+
+  // POINT 22: Month-boundary spanning inspections preserve full authoritative No. of Days × 8 MH (no pro-rating)
+  const sepOctSpan = EilDateParser.evaluateInspectionDates('28 Sep 26', '1 Oct 26', '2026-10', 4);
+  assert(sepOctSpan.isIncluded, 'Point 22: 28 Sep 26 -> 1 Oct 26 included in 2026-10');
+  assertEqual(sepOctSpan.activeDays, 4, 'Point 22: Full 4 days preserved for 28 Sep 26 -> 1 Oct 26 (no pro-rating)');
+  assertEqual(sepOctSpan.status, 'FULL', 'Point 22: Status is FULL for month-boundary inspection');
+
+  const octNovSpan = EilDateParser.evaluateInspectionDates('30 Oct 26', '2 Nov 26', '2026-10', 4);
+  assert(octNovSpan.isIncluded, 'Point 22: 30 Oct 26 -> 2 Nov 26 included in 2026-10');
+  assertEqual(octNovSpan.activeDays, 4, 'Point 22: Full 4 days preserved for 30 Oct 26 -> 2 Nov 26');
+
+  const rowsB895Regression = [
+    {
+      'Job No': 'B895',
+      'S.No': 1824,
+      'Contractor/ Main Supplier': 'Toyo',
+      'Supplier': 'Schneider',
+      'Item': 'Sw Bds',
+      'Inspection Attended (From)': '28 Sep 26',
+      'Inspection Attended(Upto)': '1 Oct 26',
+      'Review dates': '-',
+      'QAP appl.': '-',
+      'No. of Days': 4,
+    },
+    {
+      'Job No': 'B895',
+      'S.No': 1851,
+      'Contractor/ Main Supplier': 'Toyo',
+      'Supplier': 'Belgaum Aqua',
+      'Item': 'Valves',
+      'Inspection Attended (From)': '15 Oct 26',
+      'Inspection Attended(Upto)': '-',
+      'Review dates': '-',
+      'QAP appl.': '-',
+      'No. of Days': 1,
+    },
+  ];
+  const resB895 = ExcelService.analyzeJob('B895', '2026-10', [], mockMapping1, rowsB895Regression, mockMapping2, [], mockMapping3, 0);
+  assertEqual(resB895.inspection, 40, 'Point 22: B895 Call #1824 (4d × 8 = 32) + Call #1851 (1d × 8 = 8) = 40 MH');
+  assertEqual(resB895.sourceCallsExcel2[0]?.computedMh, 32, 'Point 22: Call #1824 computedMh is 32 MH (4 × 8)');
+  assertEqual(resB895.sourceCallsExcel2[1]?.computedMh, 8, 'Point 22: Call #1851 computedMh is 8 MH (1 × 8)');
+
+  const b795Elig = ExcelService.evaluateExcel2RowEligibility(
+    {
+      'Job No': 'B795',
+      'Inspection Attended (From)': '30-Sep-26',
+      'Inspection Attended(Upto)': '1-Oct-26',
+      'No. of Days': 2,
+    },
+    mockMapping2,
+    '2026-10'
+  );
+  assertEqual(b795Elig.type, 'INSPECTION', 'Point 22: B795 30-Sep-26 -> 1-Oct-26 classified as INSPECTION');
+  assertEqual(b795Elig.days, 2, 'Point 22: B795 full 2 days preserved');
+  assertEqual(b795Elig.computedMh, 16, 'Point 22: B795 computedMh is 16 MH (2 × 8)');
 }
 
 // ============================================================================
@@ -431,9 +522,18 @@ async function testExcel3Generation() {
           contractor: 'Larsen & Toubro',
           vendor: 'Sulzer Pumps India',
           itemDescription: 'Mechanical Seals & Spares',
-          numberOfDays: 1.0,
+          numberOfDays: 0.5,
           eligibility: 'Eligible',
           status: 'INCLUDED_QAP',
+        },
+        {
+          callNo: 21,
+          contractor: 'larsen & toubro',
+          vendor: 'Sulzer Pumps India',
+          itemDescription: 'Mechanical Seals & Spares',
+          numberOfDays: 0.5,
+          eligibility: 'Eligible',
+          status: 'INCLUDED_REVIEW',
         },
         {
           callNo: 3,
@@ -530,45 +630,40 @@ async function testExcel3Generation() {
   const r4Remarks = String(r4.getCell(12).value ?? '');
   const r4RemarksLines = r4Remarks.split('\n');
 
-  // POINT 10: Multiple eligible records separated by \n in the same cell
-  assertEqual(r4RemarksLines.length, 3, 'Point 10: Exactly 3 eligible call records appear in Column 12 (excluded call omitted)');
+  // POINT 10: Only Others (QAP/Review) records appear, merged by (Contractor, Supplier, Item) with summed Days
+  assertEqual(r4RemarksLines.length, 2, 'Point 10: Exactly 2 merged Others lines appear in Column 12 (Inspection & Excluded omitted, duplicates merged)');
 
-  // POINT 11: Exact format Contractor: ... | Supplier: ... | Item: ... | Days: ...
+  // POINT 11: Exact format Contractor: ... | Supplier: ... | Item: ... | Days: ... (0.5 + 0.5 = 1)
   assertEqual(
     r4RemarksLines[0],
-    'Contractor: Larsen & Toubro | Supplier: Kirloskar Brothers Ltd | Item: Centrifugal Process Pump | Days: 2',
-    'Point 11: Call 1 matches formatted string'
-  );
-  assertEqual(
-    r4RemarksLines[1],
     'Contractor: Larsen & Toubro | Supplier: Sulzer Pumps India | Item: Mechanical Seals & Spares | Days: 1',
-    'Point 11: Call 2 matches formatted string'
+    'Point 11: Merged QAP+Review entry sums Days (0.5 + 0.5 = 1) without duplicating Contractor/Supplier/Item'
   );
 
   // POINT 12: Missing Contractor displays 'Not Available'
   assertEqual(
-    r4RemarksLines[2],
+    r4RemarksLines[1],
     'Contractor: Not Available | Supplier: EagleBurgmann | Item: Gaskets | Days: 0.5',
     'Point 12: Call 3 with blank contractor displays "Contractor: Not Available"'
   );
 
   // Check text wrap and dynamic row height on Row 4
   assert(r4.getCell(12).alignment?.wrapText === true, 'Point 20: Cell 12 has wrapText enabled');
-  assert((r4.height ?? 0) >= 40, `Point 20: Row 4 height is dynamically adjusted (height: ${r4.height})`);
+  assert((r4.height ?? 0) >= 35, `Point 20: Row 4 height is dynamically adjusted (height: ${r4.height})`);
 
   // Check Column 12 width
   const col12 = mainSheet.getColumn(12);
   assert((col12.width ?? 0) >= 50, `Point 20: Column 12 width is expanded (width: ${col12.width})`);
 
-  // Check row 5 (G660)
+  // Check row 5 (G660 - Inspection only, no Others calls -> clean blank Column 12)
   const r5 = mainSheet.getRow(5);
   assertEqual(r5.getCell(1).value, 2, 'Row 5 S.No is 2');
   assertEqual(r5.getCell(2).value, 'G660', 'Row 5 Job No is G660');
   assertEqual(r5.getCell(3).value, 'FOI-6601', 'Point 18: Row 5 FOI Number is FOI-6601');
   assertEqual(
     String(r5.getCell(12).value ?? ''),
-    'Contractor: Samsung Engineering | Supplier: Technip Energies | Item: Furnace Burners | Days: 2',
-    'Point 11: Row 5 G660 remarks properly formatted'
+    '',
+    'Point 11: Row 5 G660 (Inspection-only) omits inspection lines and boilerplate from *Others/ Remarks'
   );
 
   // Check row 6 (Leave row)

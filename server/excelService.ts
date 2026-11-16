@@ -954,46 +954,44 @@ export class ExcelService {
       };
     }
 
-    let effFrom = fromHdr ? row[fromHdr] : row['Inspection Date Attended From'];
-    let effUpto = uptoHdr ? row[uptoHdr] : row['Inspection Date Attended Upto'];
-    if ((!effFrom || String(effFrom).trim() === '') && (!effUpto || String(effUpto).trim() === '')) {
-      effFrom = row['Inspection Date (From)'] || row['Call Date From'] || row['Call Date'];
-      effUpto = row['Inspection Date(Upto)'] || row['Call Date Upto'] || row['Call Date'];
-    }
+    const isBlankOrPlaceholder = (val: any): boolean => {
+      if (val === undefined || val === null) return true;
+      const s = String(val).trim().toLowerCase();
+      return (
+        s === '' ||
+        s === '-' ||
+        s === '--' ||
+        s === '0' ||
+        s === 'no' ||
+        s === 'false' ||
+        s === 'nil' ||
+        s === 'na' ||
+        s === 'n/a' ||
+        s === 'none'
+      );
+    };
 
-    const hasFrom = effFrom !== undefined && effFrom !== null && String(effFrom).trim() !== '';
-    const hasUpto = effUpto !== undefined && effUpto !== null && String(effUpto).trim() !== '';
+    // Strict attended inspection dates ONLY (never fall back to planned/offered "Inspection Date (From)/(Upto)")
+    const effFrom = fromHdr ? row[fromHdr] : (row['Inspection Attended (From)'] ?? row['Inspection Date Attended From']);
+    const effUpto = uptoHdr ? row[uptoHdr] : (row['Inspection Attended(Upto)'] ?? row['Inspection Date Attended Upto']);
 
-    const rawQap = qapHdr ? row[qapHdr] : row['QAP Approval'];
-    const hasQap =
-      rawQap !== undefined &&
-      rawQap !== null &&
-      String(rawQap).trim() !== '' &&
-      String(rawQap).trim() !== '0' &&
-      String(rawQap).trim().toLowerCase() !== 'no' &&
-      String(rawQap).trim().toLowerCase() !== 'false' &&
-      String(rawQap).trim().toLowerCase() !== 'nil';
+    const hasFrom = !isBlankOrPlaceholder(effFrom);
+    const hasUpto = !isBlankOrPlaceholder(effUpto);
+
+    const rawQap = qapHdr ? row[qapHdr] : (row['QAP appl.'] ?? row['QAP Approval']);
+    const hasQap = !isBlankOrPlaceholder(rawQap);
 
     const revHdr = excel2Mapping.fields.find((f) => f.canonicalField === 'review_dates')?.mappedHeader;
     const rawRev = revHdr ? row[revHdr] : (row['Review dates'] ?? row['Review date'] ?? row['Review Date(s)']);
-    const hasRev =
-      rawRev !== undefined &&
-      rawRev !== null &&
-      String(rawRev).trim() !== '' &&
-      String(rawRev).trim() !== '0' &&
-      String(rawRev).trim().toLowerCase() !== 'no' &&
-      String(rawRev).trim().toLowerCase() !== 'false' &&
-      String(rawRev).trim().toLowerCase() !== 'nil' &&
-      String(rawRev).trim().toLowerCase() !== 'na' &&
-      String(rawRev).trim().toLowerCase() !== 'n/a';
+    const hasRev = !isBlankOrPlaceholder(rawRev);
 
     let isInspectionValid = false;
     let inspectionActiveDays = 0;
     let inspectionReason = '';
 
     if (hasFrom || hasUpto) {
-      const fromD = effFrom || effUpto;
-      const uptoD = effUpto || effFrom;
+      const fromD = hasFrom ? effFrom : effUpto;
+      const uptoD = hasUpto ? effUpto : effFrom;
       const inspEval = EilDateParser.evaluateInspectionDates(fromD, uptoD, evaluationMonth, numDays);
       if (inspEval.isIncluded && inspEval.activeDays > 0) {
         isInspectionValid = true;
@@ -1018,19 +1016,16 @@ export class ExcelService {
       };
     }
 
-    // CASE B — QAP Approval record (Inspection dates absent or outside month)
+    // CASE B — QAP Approval record (Inspection attended dates absent)
     if (hasQap && (!hasFrom && !hasUpto)) {
       const dateCandidates = [
         rawQap,
         row['QAP appl.'],
         row['QAP rev. request'],
-        rawRev,
         row['Date received'],
         row['QAP Date'],
         row['Date'],
         row['Call Date'],
-        effFrom,
-        effUpto,
       ];
       let qapDateResolved: any = undefined;
       for (const cand of dateCandidates) {
@@ -1659,24 +1654,37 @@ export class ExcelService {
         continue;
       }
 
-      // Check inspection date validity and active evaluation period
-      let effFrom = rawFrom;
-      let effUpto = rawUpto;
-      if ((!effFrom || String(effFrom).trim() === '') && (!effUpto || String(effUpto).trim() === '')) {
-        effFrom = r['Inspection Date (From)'] || r['Call Date From'] || r['Call Date'];
-        effUpto = r['Inspection Date(Upto)'] || r['Call Date Upto'] || r['Call Date'];
-      }
+      const isBlankOrPlaceholder = (val: any): boolean => {
+        if (val === undefined || val === null) return true;
+        const s = String(val).trim().toLowerCase();
+        return (
+          s === '' ||
+          s === '-' ||
+          s === '--' ||
+          s === '0' ||
+          s === 'no' ||
+          s === 'false' ||
+          s === 'nil' ||
+          s === 'na' ||
+          s === 'n/a' ||
+          s === 'none'
+        );
+      };
 
-      const hasFrom = effFrom !== undefined && effFrom !== null && String(effFrom).trim() !== '';
-      const hasUpto = effUpto !== undefined && effUpto !== null && String(effUpto).trim() !== '';
+      // Strict attended inspection dates ONLY (never fall back to planned/offered "Inspection Date (From)/(Upto)")
+      const effFrom = rawFrom;
+      const effUpto = rawUpto;
+
+      const hasFrom = !isBlankOrPlaceholder(effFrom);
+      const hasUpto = !isBlankOrPlaceholder(effUpto);
 
       let isInspectionValid = false;
       let inspectionActiveDays = 0;
       let inspectionNote = '';
 
       if (hasFrom || hasUpto) {
-        const fromD = effFrom || effUpto;
-        const uptoD = effUpto || effFrom;
+        const fromD = hasFrom ? effFrom : effUpto;
+        const uptoD = hasUpto ? effUpto : effFrom;
         const inspEval = EilDateParser.evaluateInspectionDates(fromD, uptoD, evaluationMonth, numDays);
         if (inspEval.isIncluded && inspEval.activeDays > 0) {
           isInspectionValid = true;
@@ -1700,26 +1708,10 @@ export class ExcelService {
       }
 
       // Check QAP approval presence
-      const hasQap =
-        rawQap !== undefined &&
-        rawQap !== null &&
-        String(rawQap).trim() !== '' &&
-        String(rawQap).trim() !== '0' &&
-        String(rawQap).trim().toLowerCase() !== 'no' &&
-        String(rawQap).trim().toLowerCase() !== 'false' &&
-        String(rawQap).trim().toLowerCase() !== 'nil';
+      const hasQap = !isBlankOrPlaceholder(rawQap);
 
       // Check Review dates presence
-      const hasRev =
-        rawRev !== undefined &&
-        rawRev !== null &&
-        String(rawRev).trim() !== '' &&
-        String(rawRev).trim() !== '0' &&
-        String(rawRev).trim().toLowerCase() !== 'no' &&
-        String(rawRev).trim().toLowerCase() !== 'false' &&
-        String(rawRev).trim().toLowerCase() !== 'nil' &&
-        String(rawRev).trim().toLowerCase() !== 'na' &&
-        String(rawRev).trim().toLowerCase() !== 'n/a';
+      const hasRev = !isBlankOrPlaceholder(rawRev);
 
       let isQapValid = false;
       let qapResolvedDate: any = undefined;
@@ -1729,13 +1721,10 @@ export class ExcelService {
           rawQap,
           r['QAP appl.'],
           r['QAP rev. request'],
-          rawRev,
           r['Date received'],
           r['QAP Date'],
           r['Date'],
           r['Call Date'],
-          effFrom,
-          effUpto,
         ];
         for (const cand of dateCandidates) {
           if (cand !== undefined && cand !== null && String(cand).trim() !== '') {
@@ -2199,28 +2188,49 @@ export class ExcelService {
       totCell.font = { name: 'Calibri', size: 11, bold: true };
       totCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
-      // Col 12: *Others/ Remarks (Detailed PM Call Logs Breakdown)
+      // Col 12: *Others/ Remarks (Deduplicated Others: QAP Approval & Review Dates only)
       const remCell = row.getCell(12);
       const existingTemplateRemark = existingRemarksMap[item.jobNumber] || '';
 
-      // Extract qualifying Call Logs records for this job (eligible in evaluation month)
-      const qualifyingCalls = (item.sourceCallsExcel2 || []).filter(
-        (c) => c.eligibility === 'Eligible' || (c.status && c.status.startsWith('INCLUDED'))
+      // Include ONLY qualifying Others-contributing Call Logs records (QAP or Review dates)
+      const othersCalls = (item.sourceCallsExcel2 || []).filter(
+        (c) =>
+          c.status === 'INCLUDED_QAP' ||
+          c.status === 'INCLUDED_QAP_WITH_CONFLICT' ||
+          c.status === 'INCLUDED_REVIEW'
       );
 
       let finalRemark = '';
-      if (qualifyingCalls.length > 0) {
-        const callRemarkLines = qualifyingCalls.map((c) => {
-          const cContractor = c.contractor ? String(c.contractor).trim() : '';
-          const cSupplier = c.vendor ? String(c.vendor).trim() : '';
-          const cItem = c.itemDescription ? String(c.itemDescription).trim() : '';
+      if (othersCalls.length > 0) {
+        // Merge repeated entries sharing identical (Contractor, Supplier, Item) and sum Days
+        const mergedMap = new Map<string, { contractor: string; supplier: string; item: string; days: number }>();
+        for (const c of othersCalls) {
+          const cContractor = (c.contractor ? String(c.contractor).trim() : '') || 'Not Available';
+          const cSupplier = (c.vendor ? String(c.vendor).trim() : '') || 'Not Available';
+          const cItem = (c.itemDescription ? String(c.itemDescription).trim() : '') || 'Not Available';
           const cDays =
-            c.numberOfDays !== undefined && c.numberOfDays !== null && !isNaN(c.numberOfDays)
-              ? c.numberOfDays
-              : '';
+            c.numberOfDays !== undefined && c.numberOfDays !== null && !isNaN(Number(c.numberOfDays))
+              ? Number(c.numberOfDays)
+              : 0;
 
-          return `Contractor: ${cContractor || 'Not Available'} | Supplier: ${cSupplier || 'Not Available'} | Item: ${cItem || 'Not Available'} | Days: ${cDays !== '' ? cDays : 'Not Available'}`;
-        });
+          const dedupeKey = `${cContractor.toLowerCase()}||${cSupplier.toLowerCase()}||${cItem.toLowerCase()}`;
+          const existing = mergedMap.get(dedupeKey);
+          if (existing) {
+            existing.days = Math.round((existing.days + cDays) * 1000) / 1000;
+          } else {
+            mergedMap.set(dedupeKey, {
+              contractor: cContractor,
+              supplier: cSupplier,
+              item: cItem,
+              days: Math.round(cDays * 1000) / 1000,
+            });
+          }
+        }
+
+        const callRemarkLines = Array.from(mergedMap.values()).map(
+          (entry) =>
+            `Contractor: ${entry.contractor} | Supplier: ${entry.supplier} | Item: ${entry.item} | Days: ${entry.days}`
+        );
         const combinedCallRemarks = callRemarkLines.join('\n');
 
         if (item.isOverridden && item.auditNotes) {
@@ -2231,13 +2241,13 @@ export class ExcelService {
           finalRemark = combinedCallRemarks;
         }
       } else {
-        // No qualifying PM Call Logs records in active cycle (e.g. order-only job from Excel 1)
+        // No qualifying Others records for this job
         if (item.isOverridden && item.auditNotes) {
           finalRemark = `[AUDITED - MANUAL OVERRIDE] ${item.auditNotes.trim()}`;
         } else if (existingTemplateRemark) {
           finalRemark = existingTemplateRemark;
         } else {
-          finalRemark = `[EIL AUDITED] Running: ${item.runningOrders}, FD: ${item.fd}, OCS: ${item.ocsDone}, Exp: ${item.expediting}h, Insp: ${item.inspection}h, Others: ${item.others}h, Meeting: ${item.meeting || 0}h, Total: ${item.total}h`;
+          finalRemark = '';
         }
       }
 
@@ -2245,7 +2255,7 @@ export class ExcelService {
       remCell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
 
       // Dynamically calculate row height for readable multi-line remarks
-      const lineCount = finalRemark.split('\n').length;
+      const lineCount = finalRemark ? finalRemark.split('\n').length : 1;
       row.height = Math.max(24, lineCount * 17 + 6);
 
       // Zebra striping and borders

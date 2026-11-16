@@ -293,9 +293,9 @@ export class EilDateParser {
   /**
    * Evaluates Inspection attendance dates against the active evaluation month.
    * Handles:
-   * - Records completely inside current month/year -> INCLUDED (full active days)
+   * - Records completely inside current month/year -> INCLUDED (full authoritative active days)
+   * - Records spanning across month boundary -> INCLUDED (full authoritative active days; never pro-rated)
    * - Records completely outside current month/year -> EXCLUDED (0 days, ignored historical)
-   * - Records spanning across month boundary -> PARTIALLY INCLUDED (pro-rated days for the evaluation month portion)
    */
   public static evaluateInspectionDates(
     rawFrom: any,
@@ -305,13 +305,20 @@ export class EilDateParser {
   ): {
     isIncluded: boolean;
     activeDays: number;
-    status: 'FULL' | 'PARTIAL' | 'EXCLUDED' | 'INVALID';
+    status: 'FULL' | 'EXCLUDED' | 'INVALID';
     reason: string;
     fromParsed: ParsedDateResult;
     uptoParsed: ParsedDateResult;
   } {
-    const fromParsed = this.parse(rawFrom);
-    const uptoParsed = this.parse(rawUpto);
+    let fromParsed = this.parse(rawFrom);
+    let uptoParsed = this.parse(rawUpto);
+
+    // If only one attendance date is valid, anchor both bounds to that valid date
+    if (fromParsed.isValid && fromParsed.date && (!uptoParsed.isValid || !uptoParsed.date)) {
+      uptoParsed = fromParsed;
+    } else if (uptoParsed.isValid && uptoParsed.date && (!fromParsed.isValid || !fromParsed.date)) {
+      fromParsed = uptoParsed;
+    }
 
     if (!fromParsed.isValid || !fromParsed.date || !uptoParsed.isValid || !uptoParsed.date) {
       return {
@@ -342,13 +349,10 @@ export class EilDateParser {
       };
     }
 
-    const MS_PER_DAY = 24 * 60 * 60 * 1000;
-    const totalSpanCalendarDays = Math.round((uTime - fTime) / MS_PER_DAY) + 1;
-
     // Completely inside evaluation month
     if (fTime >= wStart && uTime <= wEnd) {
       return {
-        isIncluded: true,
+        isIncluded: totalReportedDays > 0,
         activeDays: totalReportedDays,
         status: 'FULL',
         reason: `Inspection dates fully within ${evaluationMonthYyyyMm}.`,
@@ -357,19 +361,12 @@ export class EilDateParser {
       };
     }
 
-    // Spanning boundary: only portion within evaluation month contributes
-    const overlapStart = Math.max(fTime, wStart);
-    const overlapEnd = Math.min(uTime, wEnd);
-    const overlapCalendarDays = Math.round((overlapEnd - overlapStart) / MS_PER_DAY) + 1;
-
-    const ratio = totalSpanCalendarDays > 0 ? overlapCalendarDays / totalSpanCalendarDays : 1;
-    const activeDays = Math.round(totalReportedDays * ratio * 100) / 100;
-
+    // Overlaps evaluation month boundary (e.g. 28-Sep -> 01-Oct): preserve full authoritative No. of Days
     return {
-      isIncluded: activeDays > 0,
-      activeDays,
-      status: 'PARTIAL',
-      reason: `Inspection period spans month boundary (${fromParsed.formattedDate} to ${uptoParsed.formattedDate}). Pro-rated ${overlapCalendarDays} of ${totalSpanCalendarDays} days for ${evaluationMonthYyyyMm}.`,
+      isIncluded: totalReportedDays > 0,
+      activeDays: totalReportedDays,
+      status: 'FULL',
+      reason: `Inspection period overlaps ${evaluationMonthYyyyMm} (${fromParsed.formattedDate} to ${uptoParsed.formattedDate}). Full authoritative ${totalReportedDays} days applied.`,
       fromParsed,
       uptoParsed,
     };
