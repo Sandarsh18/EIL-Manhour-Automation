@@ -1,0 +1,6 @@
+{
+  "name": "EIL Manhour Automation & Audit",
+  "description": "Production-quality business-rule-driven EIL Excel automation and manhour audit system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
