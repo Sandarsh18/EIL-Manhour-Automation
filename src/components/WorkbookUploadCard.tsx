@@ -98,6 +98,9 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
     if (file) {
+      if (metadata) {
+        setIsReplacing(true);
+      }
       await processSelectedFile(file);
     }
   };
@@ -106,6 +109,8 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
     const file = e.target.files?.[0];
     if (file) {
       await processSelectedFile(file);
+    } else {
+      setIsReplacing(false);
     }
     // Reset file input so the same filename can be re-selected if needed
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -115,7 +120,8 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
     setUploadError(null);
     const ext = file.name.toLowerCase();
     if (!ext.endsWith('.xlsx') && !ext.endsWith('.xls') && !ext.endsWith('.xlsm')) {
-      setUploadError('Invalid format. Please select an Excel workbook (.xlsx, .xls).');
+      setUploadError('Invalid format. Please select an Excel workbook (.xlsx, .xls, .xlsm).');
+      setIsReplacing(false);
       return;
     }
 
@@ -130,10 +136,27 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
     }
   };
 
-  const handleTriggerReplace = () => {
-    setIsReplacing(true);
+  const openFilePicker = (replacing: boolean) => {
     setUploadError(null);
+    setIsConfirmingDelete(false);
+    setIsReplacing(replacing);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    const handleFocusBack = () => {
+      setTimeout(() => {
+        if (!fileInputRef.current?.files?.length) {
+          setIsReplacing(false);
+        }
+      }, 300);
+      window.removeEventListener('focus', handleFocusBack);
+    };
+    window.addEventListener('focus', handleFocusBack);
     fileInputRef.current?.click();
+  };
+
+  const handleTriggerReplace = () => {
+    openFilePicker(true);
   };
 
   const formatFileSize = (bytes?: number | null): string => {
@@ -151,6 +174,15 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
       id={`card-${type}`}
       className={`bg-white rounded-xl border border-slate-200 border-l-4 ${info.bgAccent} shadow-xs flex flex-col justify-between transition overflow-hidden`}
     >
+      {/* Single persistent file input for both initial upload and replacement */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".xlsx,.xls,.xlsm"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       {/* Top Card Header */}
       <div className="p-4 border-b border-slate-100">
         <div className="flex items-start justify-between gap-2">
@@ -196,7 +228,7 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
 
       {/* Card Body: Dropzone or Uploaded Details */}
       <div className="p-4 flex-1 flex flex-col justify-between">
-        {!metadata ? (
+            {!metadata ? (
           /* Empty / Dropzone State */
           <div
             onDragOver={handleDragOver}
@@ -208,14 +240,6 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
                 : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'
             }`}
           >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.xlsm"
-              className="hidden"
-              onChange={handleFileChange}
-            />
-
             {isUploading ? (
               <div className="py-4 flex flex-col items-center gap-2">
                 <Loader2 className="w-7 h-7 text-blue-600 animate-spin" />
@@ -238,8 +262,8 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
                 <button
                   id={`browse-btn-${type}`}
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md border border-blue-200 transition shadow-2xs"
+                  onClick={() => openFilePicker(false)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md border border-blue-200 transition shadow-2xs cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
                   Browse Workbook
@@ -265,8 +289,15 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
             </div>
           </div>
         ) : (
-          /* Uploaded Workbook State */
-          <div className="space-y-3 flex-1 flex flex-col justify-between">
+          /* Uploaded Workbook State (also supports drag-and-drop replacement) */
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={`space-y-3 flex-1 flex flex-col justify-between rounded-lg transition ${
+              isDragging ? 'ring-2 ring-blue-500 bg-blue-50/40 p-1' : ''
+            }`}
+          >
             {/* File Info Box */}
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
               <div className="flex items-start justify-between gap-2">
@@ -285,14 +316,6 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
                           minute: '2-digit',
                         })}
                       </span>
-                      {metadata.isSampleData && (
-                        <>
-                          <span>•</span>
-                          <span className="text-[10px] font-medium bg-blue-100 text-blue-700 px-1 rounded">
-                            Sample Data
-                          </span>
-                        </>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -381,12 +404,13 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
               <button
                 id={`replace-btn-${type}`}
                 type="button"
+                disabled={isUploading}
                 onClick={handleTriggerReplace}
-                className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition"
+                className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md transition disabled:opacity-50 cursor-pointer"
                 title="Directly select a new file to replace this workbook"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Replace File</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isUploading ? 'animate-spin' : ''}`} />
+                <span>{isUploading ? 'Replacing...' : 'Replace File'}</span>
               </button>
 
               {isConfirmingDelete ? (
@@ -396,6 +420,7 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
                     type="button"
                     onClick={() => {
                       setIsConfirmingDelete(false);
+                      setUploadError(null);
                       onDelete();
                     }}
                     className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold"
@@ -414,21 +439,14 @@ export const WorkbookUploadCard: React.FC<WorkbookUploadCardProps> = ({
                 <button
                   id={`delete-btn-${type}`}
                   type="button"
+                  disabled={isUploading}
                   onClick={() => setIsConfirmingDelete(true)}
-                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-md transition"
+                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-md transition disabled:opacity-50"
                   title="Remove workbook from active session"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
               )}
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.xlsm"
-                className="hidden"
-                onChange={handleFileChange}
-              />
             </div>
           </div>
         )}

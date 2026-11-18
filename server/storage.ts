@@ -18,10 +18,12 @@ import { ExcelService, normalizeJobNumber, isValidJobNumber } from './excelServi
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const PROJECT_FILES_DIR = path.join(DATA_DIR, 'project_files');
 const PROJECTS_FILE = path.join(DATA_DIR, 'projects.json');
 const CURRENT_STATE_FILE = path.join(DATA_DIR, 'current_state.json');
 
 export class ProjectStorage {
+  private static initialized = false;
   private static workbooksState: WorkbooksState = {
     excel1: null,
     excel2: null,
@@ -40,79 +42,26 @@ export class ProjectStorage {
   private static generatedOutput: GeneratedOutputMetadata | null = null;
 
   public static init() {
+    if (this.initialized) {
+      return;
+    }
+    this.initialized = true;
+
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     if (!fs.existsSync(UPLOADS_DIR)) {
       fs.mkdirSync(UPLOADS_DIR, { recursive: true });
     }
+    if (!fs.existsSync(PROJECT_FILES_DIR)) {
+      fs.mkdirSync(PROJECT_FILES_DIR, { recursive: true });
+    }
     if (!fs.existsSync(PROJECTS_FILE)) {
       fs.writeFileSync(PROJECTS_FILE, JSON.stringify([], null, 2), 'utf-8');
     }
 
-    // Restore current session state if available
-    if (fs.existsSync(CURRENT_STATE_FILE)) {
-      try {
-        const raw = fs.readFileSync(CURRENT_STATE_FILE, 'utf-8');
-        const parsed = JSON.parse(raw);
-        if (parsed.workbooksState) this.workbooksState = parsed.workbooksState;
-        if (parsed.mappingsState) this.mappingsState = parsed.mappingsState;
-        if (parsed.currentStep) this.currentStep = parsed.currentStep;
-        if (parsed.evaluationMonth) this.evaluationMonth = parsed.evaluationMonth;
-        if (parsed.selectedJobs) this.selectedJobs = parsed.selectedJobs;
-        if (parsed.calculations) {
-          this.calculations = parsed.calculations;
-          for (const calc of Object.values(this.calculations)) {
-            if (calc && (calc.total === undefined || calc.total === null || isNaN(calc.total))) {
-              calc.total = ExcelService.calculateTotal({
-                expediting: calc.expediting || 0,
-                inspection: calc.inspection || 0,
-                others: calc.others || 0,
-                meeting: calc.meeting || 0,
-              });
-            }
-          }
-        }
-        if (parsed.reviewItems) {
-          this.reviewItems = parsed.reviewItems;
-          for (const item of Object.values(this.reviewItems)) {
-            if (item && (item.total === undefined || item.total === null || isNaN(item.total))) {
-              item.total = ExcelService.calculateTotal({
-                expediting: item.expediting || 0,
-                inspection: item.inspection || 0,
-                others: item.others || 0,
-                meeting: item.meeting || 0,
-              });
-            }
-          }
-        }
-        if (parsed.outputReport) this.outputReport = parsed.outputReport;
-        if (parsed.generatedOutput) this.generatedOutput = parsed.generatedOutput;
-
-        // Restore buffers and re-parse metadata so row counts reflect accurate dimensions
-        (['excel1', 'excel2', 'excel3'] as WorkbookType[]).forEach((type) => {
-          try {
-            const files = fs.readdirSync(UPLOADS_DIR);
-            const matching = files.filter((f) => f.startsWith(`${type}_`)).sort();
-            const found = matching[matching.length - 1];
-            if (found) {
-              const buf = fs.readFileSync(path.join(UPLOADS_DIR, found));
-              this.rawBuffers.set(type, buf);
-              const originalName = this.workbooksState[type]?.fileName || found.replace(new RegExp(`^${type}_[0-9]+_`), '');
-              this.workbooksState[type] = ExcelService.parseWorkbookBuffer(buf, originalName, type);
-              if ((!this.mappingsState[type] || !this.mappingsState[type]?.selectedSheet) && this.workbooksState[type]?.sheets.length) {
-                const active = this.workbooksState[type]!.sheets.find((s) => s.name === this.workbooksState[type]!.activeSheet) || this.workbooksState[type]!.sheets[0];
-                this.mappingsState[type] = ExcelService.generateDefaultMapping(type, active);
-              }
-            }
-          } catch (e) {
-            console.warn(`Could not restore buffer for ${type}:`, e);
-          }
-        });
-      } catch (err) {
-        console.warn('Failed to restore current state from disk:', err);
-      }
-    }
+    // Start empty on server startup: clear transient active uploads and reset active session state
+    this.resetAllWorkbooks();
   }
 
   public static getWorkbooksState(): WorkbooksState {
@@ -123,8 +72,9 @@ export class ProjectStorage {
     if (this.rawBuffers.has(type)) {
       return this.rawBuffers.get(type)!;
     }
-    const files = fs.readdirSync(UPLOADS_DIR);
-    const found = files.find((f) => f.startsWith(`${type}_`));
+    if (!fs.existsSync(UPLOADS_DIR)) return null;
+    const files = fs.readdirSync(UPLOADS_DIR).filter((f) => f.startsWith(`${type}_`)).sort();
+    const found = files[files.length - 1];
     if (found) {
       const buf = fs.readFileSync(path.join(UPLOADS_DIR, found));
       this.rawBuffers.set(type, buf);
@@ -227,6 +177,7 @@ export class ProjectStorage {
     this.reviewItems = {};
     this.outputReport = null;
     this.outputBuffer = null;
+    this.generatedOutput = null;
     this.selectedJobs = [];
     this.currentStep = 1;
 
@@ -255,6 +206,7 @@ export class ProjectStorage {
     this.reviewItems = {};
     this.outputReport = null;
     this.outputBuffer = null;
+    this.generatedOutput = null;
     this.currentStep = 1;
 
     this.persistCurrentState();
@@ -271,33 +223,23 @@ export class ProjectStorage {
     this.reviewItems = {};
     this.outputReport = null;
     this.outputBuffer = null;
+    this.generatedOutput = null;
 
     try {
-      const existingFiles = fs.readdirSync(UPLOADS_DIR);
-      for (const f of existingFiles) {
-        fs.unlinkSync(path.join(UPLOADS_DIR, f));
+      if (fs.existsSync(UPLOADS_DIR)) {
+        const existingFiles = fs.readdirSync(UPLOADS_DIR);
+        for (const f of existingFiles) {
+          const fullPath = path.join(UPLOADS_DIR, f);
+          if (fs.statSync(fullPath).isFile()) {
+            fs.unlinkSync(fullPath);
+          }
+        }
       }
     } catch (e) {
       console.warn('Could not clean uploads on reset:', e);
     }
 
     this.persistCurrentState();
-  }
-
-  public static loadSampleData(): WorkbooksState {
-    this.init();
-    const samples = ExcelService.createSampleWorkbooks();
-
-    this.saveUploadedWorkbook('excel1', samples.excel1.fileName, samples.excel1.buffer);
-    this.saveUploadedWorkbook('excel2', samples.excel2.fileName, samples.excel2.buffer);
-    this.saveUploadedWorkbook('excel3', samples.excel3.fileName, samples.excel3.buffer);
-
-    if (this.workbooksState.excel1) this.workbooksState.excel1.isSampleData = true;
-    if (this.workbooksState.excel2) this.workbooksState.excel2.isSampleData = true;
-    if (this.workbooksState.excel3) this.workbooksState.excel3.isSampleData = true;
-
-    this.persistCurrentState();
-    return this.workbooksState;
   }
 
   // Reconciliation
@@ -678,9 +620,22 @@ export class ProjectStorage {
     this.init();
     const projects = this.listProjects();
     const now = new Date().toISOString();
+    const projectId = `proj_${Date.now()}`;
+
+    // Snapshot active workbook buffers into isolated per-project directory
+    const projFilesPath = path.join(PROJECT_FILES_DIR, projectId);
+    if (!fs.existsSync(projFilesPath)) {
+      fs.mkdirSync(projFilesPath, { recursive: true });
+    }
+    (['excel1', 'excel2', 'excel3'] as WorkbookType[]).forEach((type) => {
+      const buf = this.getWorkbookBuffer(type);
+      if (buf && this.workbooksState[type]) {
+        fs.writeFileSync(path.join(projFilesPath, `${type}.xlsx`), buf);
+      }
+    });
 
     const project: SavedProject = {
-      id: `proj_${Date.now()}`,
+      id: projectId,
       name,
       description: description || '',
       createdAt: now,
@@ -706,6 +661,9 @@ export class ProjectStorage {
     const project = projects.find((p) => p.id === projectId);
     if (!project) return null;
 
+    // Clear previous transient uploads before loading project snapshot
+    this.resetAllWorkbooks();
+
     this.workbooksState = { ...project.workbooksState };
     if (project.mappingsState) this.mappingsState = project.mappingsState;
     if (project.currentStep) this.currentStep = project.currentStep;
@@ -714,6 +672,18 @@ export class ProjectStorage {
     if (project.calculations) this.calculations = project.calculations;
     if (project.reviewItems) this.reviewItems = project.reviewItems;
     if (project.outputReport) this.outputReport = project.outputReport;
+
+    const projFilesPath = path.join(PROJECT_FILES_DIR, projectId);
+    (['excel1', 'excel2', 'excel3'] as WorkbookType[]).forEach((type) => {
+      const savedFile = path.join(projFilesPath, `${type}.xlsx`);
+      if (fs.existsSync(savedFile)) {
+        const buf = fs.readFileSync(savedFile);
+        this.rawBuffers.set(type, buf);
+        const origName = this.workbooksState[type]?.fileName || `${type}.xlsx`;
+        const uploadName = `${type}_${Date.now()}_${origName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        fs.writeFileSync(path.join(UPLOADS_DIR, uploadName), buf);
+      }
+    });
 
     this.persistCurrentState();
     return project;
@@ -724,6 +694,11 @@ export class ProjectStorage {
     const projects = this.listProjects();
     const filtered = projects.filter((p) => p.id !== projectId);
     fs.writeFileSync(PROJECTS_FILE, JSON.stringify(filtered, null, 2), 'utf-8');
+
+    const projFilesPath = path.join(PROJECT_FILES_DIR, projectId);
+    if (fs.existsSync(projFilesPath)) {
+      fs.rmSync(projFilesPath, { recursive: true, force: true });
+    }
     return true;
   }
 

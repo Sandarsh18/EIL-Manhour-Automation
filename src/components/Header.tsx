@@ -1,5 +1,5 @@
-import React from 'react';
-import { Layers, FolderOpen, Save, RotateCcw, Calendar, CheckCircle2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Layers, FolderOpen, Save, RotateCcw, Calendar } from 'lucide-react';
 
 interface HeaderProps {
   evaluationMonth: string;
@@ -18,6 +18,7 @@ export const Header: React.FC<HeaderProps> = ({
   onReset,
   hasWorkbooks,
 }) => {
+  const [confirmingReset, setConfirmingReset] = useState(false);
   // Compute OCS 6-calendar-month window for display
   const getOcsPeriod = (evalMonth: string) => {
     try {
@@ -107,14 +108,37 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {hasWorkbooks && (
-              <button
-                id="reset-workbooks-btn"
-                onClick={onReset}
-                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-md transition"
-                title="Reset active session workbooks"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
+              confirmingReset ? (
+                <div className="flex items-center gap-1 bg-slate-800 border border-rose-500/40 px-2 py-1 rounded-md text-xs">
+                  <span className="text-[11px] text-rose-300 font-medium">Clear files?</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmingReset(false);
+                      onReset();
+                    }}
+                    className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingReset(false)}
+                    className="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-[10px]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  id="reset-workbooks-btn"
+                  onClick={() => setConfirmingReset(true)}
+                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-md transition"
+                  title="Reset active session workbooks"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              )
             )}
           </div>
         </div>

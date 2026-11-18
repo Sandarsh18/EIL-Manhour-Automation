@@ -47,7 +47,7 @@ app.get('/api/workbooks', (_req, res) => {
   res.json({ success: true, data: state });
 });
 
-app.post('/api/workbooks/upload/:workbookType', upload.single('file'), (req, res) => {
+app.post('/api/workbooks/upload/:workbookType', (req, res) => {
   const workbookType = req.params.workbookType as WorkbookType;
   if (!['excel1', 'excel2', 'excel3'].includes(workbookType)) {
     return res.status(400).json({
@@ -56,27 +56,36 @@ app.post('/api/workbooks/upload/:workbookType', upload.single('file'), (req, res
     });
   }
 
-  if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      error: 'No file uploaded. Please select an Excel workbook (.xlsx, .xls).',
-    });
-  }
+  upload.single('file')(req, res, (uploadErr: any) => {
+    if (uploadErr) {
+      return res.status(400).json({
+        success: false,
+        error: uploadErr.message || 'Invalid file upload. Please select an Excel workbook (.xlsx, .xls, .xlsm).',
+      });
+    }
 
-  try {
-    const metadata = ProjectStorage.saveUploadedWorkbook(
-      workbookType,
-      req.file.originalname,
-      req.file.buffer
-    );
-    return res.json({ success: true, data: metadata });
-  } catch (err: any) {
-    console.error(`Upload error for ${workbookType}:`, err);
-    return res.status(500).json({
-      success: false,
-      error: `Failed to process ${workbookType}: ${err.message || err}`,
-    });
-  }
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file uploaded. Please select an Excel workbook (.xlsx, .xls).',
+      });
+    }
+
+    try {
+      const metadata = ProjectStorage.saveUploadedWorkbook(
+        workbookType,
+        req.file.originalname,
+        req.file.buffer
+      );
+      return res.json({ success: true, data: metadata });
+    } catch (err: any) {
+      console.error(`Upload error for ${workbookType}:`, err);
+      return res.status(500).json({
+        success: false,
+        error: `Failed to process ${workbookType}: ${err.message || err}`,
+      });
+    }
+  });
 });
 
 app.delete('/api/workbooks/:workbookType', (req, res) => {
@@ -90,17 +99,11 @@ app.delete('/api/workbooks/:workbookType', (req, res) => {
 
 app.post('/api/workbooks/reset', (_req, res) => {
   ProjectStorage.resetAllWorkbooks();
-  return res.json({ success: true, message: 'All active workbooks reset' });
-});
-
-app.post('/api/workbooks/load-samples', (_req, res) => {
-  try {
-    const state = ProjectStorage.loadSampleData();
-    return res.json({ success: true, data: state });
-  } catch (err: any) {
-    console.error('Failed to load sample workbooks:', err);
-    return res.status(500).json({ success: false, error: err.message || err });
-  }
+  return res.json({
+    success: true,
+    data: ProjectStorage.getSessionState(),
+    message: 'All active workbooks reset',
+  });
 });
 
 // 3. Step 2 Column Mappings Endpoints

@@ -24,7 +24,6 @@ export interface WorkbookMetadata {
   validationStatus: ValidationStatus;
   validationErrors: string[];
   validationWarnings: string[];
-  isSampleData?: boolean;
 }
 
 export interface WorkbooksState {

@@ -97,10 +97,6 @@ export const EilApi = {
     await apiRequest<{ message: string }>('/api/workbooks/reset', { method: 'POST' });
   },
 
-  async loadSampleWorkbooks(): Promise<WorkbooksState> {
-    return apiRequest<WorkbooksState>('/api/workbooks/load-samples', { method: 'POST' });
-  },
-
   // Step 2: Column Mappings
   async getMappings(): Promise<MappingsState> {
     return apiRequest<MappingsState>('/api/mappings');

@@ -10,7 +10,6 @@ export interface WorkbookDefinition {
   subtitle: string;
   description: string;
   requiredFields: string[];
-  sampleFileName: string;
 }
 
 export interface SheetSummary {
@@ -33,7 +32,6 @@ export interface WorkbookMetadata {
   validationStatus: ValidationStatus;
   validationErrors: string[];
   validationWarnings: string[];
-  isSampleData?: boolean;
 }
 
 export interface WorkbooksState {

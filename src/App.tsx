@@ -68,7 +68,6 @@ export default function App() {
   const [projects, setProjects] = useState<SavedProject[]>([]);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
-  const [isLoadingSamples, setIsLoadingSamples] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [toastMessage, setToastMessage] = useState<{
@@ -76,32 +75,27 @@ export default function App() {
     text: string;
   } | null>(null);
 
-  // Load initial state on mount
+  // Start with empty workbook slots on app load while preserving Saved Projects
   useEffect(() => {
     loadInitialData();
   }, []);
 
   const loadInitialData = async () => {
     try {
+      await EilApi.resetWorkbooks();
+      setWorkbooks({ excel1: null, excel2: null, excel3: null });
+      setCalculations({});
+      setReviewItems({});
+      setOutputReport(null);
+      setReconciliation(null);
+      setSelectedJobs([]);
+      setCurrentStep(1);
+      setMaxUnlockedStep(1);
+
       const session = await EilApi.getSessionState();
       if (session) {
-        if (session.workbooks) setWorkbooks(session.workbooks);
         if (session.mappings) setMappings(session.mappings);
         if (session.evaluationMonth) setEvaluationMonth(session.evaluationMonth);
-        if (session.selectedJobs && session.selectedJobs.length > 0) setSelectedJobs(session.selectedJobs);
-        if (session.calculations && Object.keys(session.calculations).length > 0) setCalculations(session.calculations);
-        if (session.reviewItems && Object.keys(session.reviewItems).length > 0) setReviewItems(session.reviewItems);
-        if (session.outputReport) setOutputReport(session.outputReport);
-        if (typeof session.currentStep === 'number' && session.currentStep >= 1) {
-          setCurrentStep(session.currentStep);
-          setMaxUnlockedStep((prev) => Math.max(prev, session.currentStep));
-        }
-      } else {
-        const state = await EilApi.fetchWorkbooks();
-        if (state) setWorkbooks(state);
-
-        const mappingState = await EilApi.getMappings();
-        if (mappingState) setMappings(mappingState);
       }
 
       const projList = await EilApi.listProjects();
@@ -128,7 +122,8 @@ export default function App() {
   const handleUpload = async (type: WorkbookType, file: File) => {
     try {
       const meta = await EilApi.uploadWorkbook(type, file);
-      setWorkbooks((prev) => ({ ...prev, [type]: meta }));
+      const nextWorkbooks = { ...workbooks, [type]: meta };
+      setWorkbooks(nextWorkbooks);
 
       // Fetch refreshed mapping configs
       const updatedMappings = await EilApi.getMappings();
@@ -140,7 +135,13 @@ export default function App() {
       setOutputReport(null);
       setReconciliation(null);
       setSelectedJobs([]);
-      setMaxUnlockedStep(2);
+
+      const allReady =
+        Boolean(nextWorkbooks.excel1 && nextWorkbooks.excel2 && nextWorkbooks.excel3) &&
+        [nextWorkbooks.excel1, nextWorkbooks.excel2, nextWorkbooks.excel3].every(
+          (w) => w?.validationStatus !== 'ERROR'
+        );
+      setMaxUnlockedStep(allReady ? 2 : 1);
 
       showToast('success', `Uploaded & parsed ${meta.fileName} successfully.`);
     } catch (err: any) {
@@ -160,6 +161,8 @@ export default function App() {
       setCalculations({});
       setReviewItems({});
       setOutputReport(null);
+      setReconciliation(null);
+      setSelectedJobs([]);
       setCurrentStep(1);
       setMaxUnlockedStep(1);
 
@@ -170,40 +173,21 @@ export default function App() {
   };
 
   const handleReset = async () => {
-    if (!confirm('Are you sure you want to clear all active workbooks and reset the session?')) {
-      return;
-    }
     try {
       await EilApi.resetWorkbooks();
       setWorkbooks({ excel1: null, excel2: null, excel3: null });
+      const updatedMappings = await EilApi.getMappings();
+      setMappings(updatedMappings);
       setCalculations({});
       setReviewItems({});
       setOutputReport(null);
+      setReconciliation(null);
+      setSelectedJobs([]);
       setCurrentStep(1);
       setMaxUnlockedStep(1);
       showToast('info', 'All active workbooks have been reset.');
     } catch (err: any) {
       showToast('error', err.message || 'Failed to reset workbooks.');
-    }
-  };
-
-  const handleLoadSamples = async () => {
-    try {
-      setIsLoadingSamples(true);
-      const updated = await EilApi.loadSampleWorkbooks();
-      setWorkbooks(updated);
-
-      const updatedMappings = await EilApi.getMappings();
-      setMappings(updatedMappings);
-
-      showToast(
-        'success',
-        'Standard authentic EIL sample workbooks loaded successfully for Excel 1, 2, and 3.'
-      );
-    } catch (err: any) {
-      showToast('error', err.message || 'Failed to load sample workbooks.');
-    } finally {
-      setIsLoadingSamples(false);
     }
   };
 
@@ -447,11 +431,9 @@ export default function App() {
             workbooks={workbooks}
             onUpload={handleUpload}
             onDelete={handleDelete}
-            onLoadSamples={handleLoadSamples}
             onProceedToStep2={() => {
               unlockStep(2);
             }}
-            isLoadingSamples={isLoadingSamples}
           />
         )}
 

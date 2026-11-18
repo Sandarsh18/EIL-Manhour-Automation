@@ -1,5 +1,6 @@
 import { EilDateParser } from '../server/dateParser';
 import { ExcelService } from '../server/excelService';
+import { ProjectStorage } from '../server/storage';
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 
@@ -487,8 +488,32 @@ console.log('\n[2] Comprehensive 20-Point Verification Matrix:');
 // ============================================================================
 console.log('\n[3] Excel 3 Output Workbook Generation & Formatted Remarks Verification:');
 async function testExcel3Generation() {
-  const samples = ExcelService.createSampleWorkbooks();
-  const i3 = ExcelService.parseWorkbookBuffer(samples.excel3.buffer, samples.excel3.fileName, 'excel3');
+  const wb3Test = XLSX.utils.book_new();
+  const ws3TestData = [
+    ['ENGINEERS INDIA LIMITED - MONTHLY MANHOUR AUDIT & BILLING SHEET'],
+    ['Month: August 2026', 'Template Version: TEST'],
+    [],
+    [
+      'S.No',
+      'Job No',
+      'FOI Number',
+      'No. of Running orders',
+      'Orders for FD f/up',
+      'OCS done',
+      'Exp.',
+      'Inspn',
+      'Others',
+      'Meeting',
+      'Total',
+      '*Others/ Remarks',
+    ],
+    [1, 'B269', 'FOI-2691', '', '', '', '', '', '', '', '', ''],
+    ['', 'Leave', '', '', '', '', '', '', '', 8, 8, 'Annual Leave'],
+    ['', 'Total', '', '', '', '', '', '', '', '', '', 'Template Total'],
+  ];
+  XLSX.utils.book_append_sheet(wb3Test, XLSX.utils.aoa_to_sheet(ws3TestData), 'Manhour_Audit_Master');
+  const excel3TestBuf = XLSX.write(wb3Test, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  const i3 = ExcelService.parseWorkbookBuffer(excel3TestBuf, 'TEST_MASTER_TEMPLATE.xlsx', 'excel3');
   const m3 = ExcelService.autoMapHeaders('excel3', i3.sheets[0]);
 
   // Create an approved review object for Job B269 with multiple calls including missing contractor
@@ -584,7 +609,7 @@ async function testExcel3Generation() {
   };
 
   const genResult = await ExcelService.generateOutputWorkbook(
-    samples.excel3.buffer,
+    excel3TestBuf,
     m3,
     approvedReviews,
     '2026-08'
@@ -683,7 +708,46 @@ async function testExcel3Generation() {
   assert(auditSheet !== undefined, 'Point 20: EIL_Audit_Trail sheet exists and is appended');
 }
 
+function testStorageLifecycle() {
+  console.log('\n[4] Storage Empty Startup, Workbook Replacement & Saved Projects:');
+  ProjectStorage.init();
+  const initialWb = ProjectStorage.getWorkbooksState();
+  assertEqual(initialWb.excel1, null, 'Startup: excel1 is null');
+  assertEqual(initialWb.excel2, null, 'Startup: excel2 is null');
+  assertEqual(initialWb.excel3, null, 'Startup: excel3 is null');
+
+  const wbA = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbA, XLSX.utils.aoa_to_sheet([['Job No', 'Balance Quantity', 'OCS Date'], ['B100', 1, '']]), 'Sheet1');
+  const bufA = XLSX.write(wbA, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+  const wbB = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wbB, XLSX.utils.aoa_to_sheet([['Job No', 'Balance Quantity', 'OCS Date'], ['B200', 2, ''], ['B201', 3, '']]), 'Sheet1');
+  const bufB = XLSX.write(wbB, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+  const mA = ProjectStorage.saveUploadedWorkbook('excel1', 'first.xlsx', bufA);
+  assertEqual(mA.fileName, 'first.xlsx', 'Upload: first.xlsx saved');
+
+  const mB = ProjectStorage.saveUploadedWorkbook('excel1', 'replacement.xlsx', bufB);
+  assertEqual(mB.fileName, 'replacement.xlsx', 'Replace: replacement.xlsx overwrote first.xlsx');
+  assertEqual(ProjectStorage.getWorkbooksState().excel1?.fileName, 'replacement.xlsx', 'Replace: active state reflects replacement.xlsx');
+  assertEqual(mB.sheets[0].rowCount, 2, 'Replace: replacement.xlsx rowCount is 2');
+
+  const saved = ProjectStorage.saveProject('Regression Snapshot', 'Snapshot check');
+  ProjectStorage.resetAllWorkbooks();
+  assertEqual(ProjectStorage.getWorkbooksState().excel1, null, 'Reset: excel1 cleared after resetAllWorkbooks');
+
+  const restored = ProjectStorage.loadProject(saved.id);
+  assert(restored !== null, 'Saved Project: loadProject restores saved snapshot after reset');
+  assertEqual(ProjectStorage.getWorkbooksState().excel1?.fileName, 'replacement.xlsx', 'Saved Project: restored excel1 metadata');
+  assert(ProjectStorage.getWorkbookBuffer('excel1') !== null, 'Saved Project: restored excel1 buffer from project snapshot');
+
+  // Clean up test data
+  ProjectStorage.deleteProject(saved.id);
+  ProjectStorage.resetAllWorkbooks();
+}
+
 testExcel3Generation().then(() => {
+  testStorageLifecycle();
   console.log(`\n======================================================`);
   console.log(`Test Execution Finished: ${passed} passed, ${failed} failed.`);
   console.log(`======================================================\n`);
